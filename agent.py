@@ -9,9 +9,16 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 
-from claude_code_sdk import ClaudeSDKClient
-
-from client import create_client
+from providers import (
+    get_provider,
+    get_default_model,
+    BaseProvider,
+    AssistantMessage,
+    UserMessage,
+    TextBlock,
+    ToolUseBlock,
+    ToolResultBlock,
+)
 from progress import print_session_header, print_progress_summary
 from prompts import get_initializer_prompt, get_coding_prompt, copy_spec_to_project
 
@@ -21,15 +28,15 @@ AUTO_CONTINUE_DELAY_SECONDS = 3
 
 
 async def run_agent_session(
-    client: ClaudeSDKClient,
+    provider: BaseProvider,
     message: str,
     project_dir: Path,
 ) -> tuple[str, str]:
     """
-    Run a single agent session using Claude Agent SDK.
+    Run a single agent session using the given provider.
 
     Args:
-        client: Claude SDK client
+        provider: The LLM provider to use
         message: The prompt to send
         project_dir: Project directory path
 
@@ -38,49 +45,37 @@ async def run_agent_session(
         - "continue" if agent should continue working
         - "error" if an error occurred
     """
-    print("Sending prompt to Claude Agent SDK...\n")
+    print("Sending prompt to agent...\n")
 
     try:
         # Send the query
-        await client.query(message)
+        await provider.query(message)
 
         # Collect response text and show tool use
         response_text = ""
-        async for msg in client.receive_response():
-            msg_type = type(msg).__name__
-
-            # Handle AssistantMessage (text and tool use)
-            if msg_type == "AssistantMessage" and hasattr(msg, "content"):
+        async for msg in provider.receive_response():
+            if isinstance(msg, AssistantMessage):
                 for block in msg.content:
-                    block_type = type(block).__name__
-
-                    if block_type == "TextBlock" and hasattr(block, "text"):
+                    if isinstance(block, TextBlock):
                         response_text += block.text
                         print(block.text, end="", flush=True)
-                    elif block_type == "ToolUseBlock" and hasattr(block, "name"):
+                    elif isinstance(block, ToolUseBlock):
                         print(f"\n[Tool: {block.name}]", flush=True)
-                        if hasattr(block, "input"):
-                            input_str = str(block.input)
-                            if len(input_str) > 200:
-                                print(f"   Input: {input_str[:200]}...", flush=True)
-                            else:
-                                print(f"   Input: {input_str}", flush=True)
+                        input_str = str(block.input)
+                        if len(input_str) > 200:
+                            print(f"   Input: {input_str[:200]}...", flush=True)
+                        else:
+                            print(f"   Input: {input_str}", flush=True)
 
-            # Handle UserMessage (tool results)
-            elif msg_type == "UserMessage" and hasattr(msg, "content"):
+            elif isinstance(msg, UserMessage):
                 for block in msg.content:
-                    block_type = type(block).__name__
-
-                    if block_type == "ToolResultBlock":
-                        result_content = getattr(block, "content", "")
-                        is_error = getattr(block, "is_error", False)
-
-                        # Check if command was blocked by security hook
-                        if "blocked" in str(result_content).lower():
-                            print(f"   [BLOCKED] {result_content}", flush=True)
-                        elif is_error:
+                    if isinstance(block, ToolResultBlock):
+                        # Check if command was blocked
+                        if "blocked" in block.content.lower():
+                            print(f"   [BLOCKED] {block.content}", flush=True)
+                        elif block.is_error:
                             # Show errors (truncated)
-                            error_str = str(result_content)[:500]
+                            error_str = block.content[:500]
                             print(f"   [Error] {error_str}", flush=True)
                         else:
                             # Tool succeeded - just show brief confirmation
@@ -96,7 +91,8 @@ async def run_agent_session(
 
 async def run_autonomous_agent(
     project_dir: Path,
-    model: str,
+    provider_name: str,
+    model: str | None = None,
     max_iterations: Optional[int] = None,
 ) -> None:
     """
@@ -104,14 +100,20 @@ async def run_autonomous_agent(
 
     Args:
         project_dir: Directory for the project
-        model: Claude model to use
+        provider_name: Name of the LLM provider to use
+        model: Model to use (defaults to provider's default)
         max_iterations: Maximum number of iterations (None for unlimited)
     """
+    # Use default model if not specified
+    if model is None:
+        model = get_default_model(provider_name)
+    
     print("\n" + "=" * 70)
     print("  AUTONOMOUS CODING AGENT DEMO")
     print("=" * 70)
-    print(f"\nProject directory: {project_dir}")
+    print(f"\nProvider: {provider_name}")
     print(f"Model: {model}")
+    print(f"Project directory: {project_dir}")
     if max_iterations:
         print(f"Max iterations: {max_iterations}")
     else:
@@ -155,8 +157,8 @@ async def run_autonomous_agent(
         # Print session header
         print_session_header(iteration, is_first_run)
 
-        # Create client (fresh context)
-        client = create_client(project_dir, model)
+        # Create provider (fresh context for each session)
+        provider = get_provider(provider_name, model, project_dir)
 
         # Choose prompt based on session type
         if is_first_run:
@@ -166,8 +168,8 @@ async def run_autonomous_agent(
             prompt = get_coding_prompt()
 
         # Run session with async context manager
-        async with client:
-            status, response = await run_agent_session(client, prompt, project_dir)
+        async with provider:
+            status, response = await run_agent_session(provider, prompt, project_dir)
 
         # Handle status
         if status == "continue":

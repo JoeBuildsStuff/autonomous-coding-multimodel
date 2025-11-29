@@ -294,6 +294,58 @@ def get_command_for_validation(cmd: str, segments: list[str]) -> str:
     return ""
 
 
+def validate_bash_command(command: str) -> tuple[bool, str]:
+    """
+    Validate a bash command against the security allowlist.
+    
+    This is a synchronous version for use by non-Claude providers
+    that don't use the hook system.
+    
+    Args:
+        command: The bash command to validate
+        
+    Returns:
+        Tuple of (is_allowed, reason_if_blocked)
+    """
+    if not command:
+        return True, ""
+    
+    # Extract all commands from the command string
+    commands = extract_commands(command)
+    
+    if not commands:
+        return False, f"Could not parse command for security validation: {command}"
+    
+    # Split into segments for per-command validation
+    segments = split_command_segments(command)
+    
+    # Check each command against the allowlist
+    for cmd in commands:
+        if cmd not in ALLOWED_COMMANDS:
+            return False, f"Command '{cmd}' is not in the allowed commands list"
+        
+        # Additional validation for sensitive commands
+        if cmd in COMMANDS_NEEDING_EXTRA_VALIDATION:
+            cmd_segment = get_command_for_validation(cmd, segments)
+            if not cmd_segment:
+                cmd_segment = command
+            
+            if cmd == "pkill":
+                allowed, reason = validate_pkill_command(cmd_segment)
+                if not allowed:
+                    return False, reason
+            elif cmd == "chmod":
+                allowed, reason = validate_chmod_command(cmd_segment)
+                if not allowed:
+                    return False, reason
+            elif cmd == "init.sh":
+                allowed, reason = validate_init_script(cmd_segment)
+                if not allowed:
+                    return False, reason
+    
+    return True, ""
+
+
 async def bash_security_hook(input_data, tool_use_id=None, context=None):
     """
     Pre-tool-use hook that validates bash commands using an allowlist.
