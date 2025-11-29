@@ -1,0 +1,8 @@
+<project_specification>
+  <project_name>Claude.ai Clone - AI Chat Interface</project_name>
+  <overview>Build a fully functional clone of claude.ai with clean chat interface for interacting with Claude API via Anthropic SDK, including conversation management, model selection, and custom settings.</overview>
+  <technology_stack>
+    <frontend>React with Vite, Tailwind CSS, React Router, React Markdown</frontend>
+    <backend>Node.js with Express, SQLite with better-sqlite3, Claude API streaming with Server-Sent Events</backend>
+  </technology_stack>
+</project_specification>
