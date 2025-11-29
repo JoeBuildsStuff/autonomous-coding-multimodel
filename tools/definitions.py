@@ -2,150 +2,209 @@
 Tool Definitions for OpenAI-Compatible Providers
 ================================================
 
-Defines tools in OpenAI function calling format for use with
-OpenAI, Grok, and other compatible APIs.
+Defines OpenAI-style function schemas that mirror the Claude CLI tools.
 """
 
-# Tool definitions in OpenAI function calling format
 TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the contents of a file at the specified path. Use this to examine existing code, configuration files, or any text file.",
+            "description": (
+                "Read the contents of a file. Supports optional offset/limit to "
+                "page through very large files."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "The relative path to the file to read (relative to project directory)"
-                    }
+                        "description": "Relative path to the file (within the project directory)",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Optional 0-based line number to start reading from",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Optional number of lines to read starting at offset",
+                    },
                 },
-                "required": ["path"]
-            }
-        }
+                "required": ["path"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Write content to a file at the specified path. Creates the file if it doesn't exist, or overwrites if it does. Use this to create new files or completely replace file contents.",
+            "description": (
+                "Write content to a file. Creates parents if needed and overwrites the entire file."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "The relative path to the file to write (relative to project directory)"
+                        "description": "Relative path to the file (within the project directory)",
                     },
                     "content": {
                         "type": "string",
-                        "description": "The content to write to the file"
-                    }
+                        "description": "Content to write",
+                    },
                 },
-                "required": ["path", "content"]
-            }
-        }
+                "required": ["path", "content"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "edit_file",
-            "description": "Make a targeted edit to a file by replacing a specific string with new content. Use this for surgical edits rather than rewriting entire files.",
+            "description": (
+                "Replace existing text within a file. The target string must exist; "
+                "set replace_all true to update every occurrence."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "The relative path to the file to edit"
+                        "description": "Relative path to the file",
                     },
                     "old_string": {
                         "type": "string",
-                        "description": "The exact string to find and replace (must match exactly)"
+                        "description": "Exact text to replace",
                     },
                     "new_string": {
                         "type": "string",
-                        "description": "The string to replace it with"
-                    }
+                        "description": "Replacement text",
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "Set true to replace every occurrence (default replaces first only)",
+                    },
                 },
-                "required": ["path", "old_string", "new_string"]
-            }
-        }
+                "required": ["path", "old_string", "new_string"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
-            "name": "list_directory",
-            "description": "List the contents of a directory. Returns file and directory names.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "The relative path to the directory to list (use '.' for current directory)"
-                    }
-                },
-                "required": ["path"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_files",
-            "description": "Search for files matching a glob pattern. Useful for finding files by name or extension.",
+            "name": "glob_search",
+            "description": "List files or directories matching a glob pattern within the sandbox.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pattern": {
                         "type": "string",
-                        "description": "Glob pattern to match (e.g., '**/*.py' for all Python files)"
-                    }
+                        "description": "Glob pattern (supports ** for recursion)",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional directory to scope the search (defaults to project root)",
+                    },
                 },
-                "required": ["pattern"]
-            }
-        }
+                "required": ["pattern"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
-            "name": "search_content",
-            "description": "Search for a pattern in file contents using grep-like functionality.",
+            "name": "grep_search",
+            "description": (
+                "Search file contents using ripgrep-compatible options. Supports line "
+                "context, glob/type filters, and output throttling."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pattern": {
                         "type": "string",
-                        "description": "The text pattern to search for"
+                        "description": "Regex or literal pattern to search for",
                     },
                     "path": {
                         "type": "string",
-                        "description": "The directory or file to search in (use '.' for entire project)"
+                        "description": "File or directory to search (default '.')",
                     },
-                    "include": {
+                    "glob": {
                         "type": "string",
-                        "description": "Optional glob pattern to filter files (e.g., '*.py')"
-                    }
+                        "description": "Optional glob passed to rg --glob",
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "Optional ripgrep file type filter (e.g. 'ts', 'py')",
+                    },
+                    "output_mode": {
+                        "type": "string",
+                        "enum": ["content", "files_with_matches", "count"],
+                        "description": "Choose detailed content, file list, or counts",
+                    },
+                    "-A": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Number of lines to show after each match",
+                    },
+                    "-B": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Number of lines to show before each match",
+                    },
+                    "-C": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Number of lines to show before and after each match",
+                    },
+                    "-n": {
+                        "type": "boolean",
+                        "description": "Show line numbers (default true for content mode)",
+                    },
+                    "-i": {
+                        "type": "boolean",
+                        "description": "Case-insensitive search",
+                    },
+                    "head_limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Limit output lines/entries (similar to piping through head)",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Skip this many output lines before applying head_limit",
+                    },
+                    "multiline": {
+                        "type": "boolean",
+                        "description": "Enable multiline dotall mode (rg -U --multiline-dotall)",
+                    },
                 },
-                "required": ["pattern", "path"]
-            }
-        }
+                "required": ["pattern"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Execute a bash command. Only certain commands are allowed for security: ls, cat, head, tail, wc, grep, cp, mkdir, chmod, pwd, npm, node, git, ps, lsof, sleep, pkill (dev processes only).",
+            "description": (
+                "Execute a bash command from the project root. Commands are validated "
+                "against the same allowlist used by the Claude CLI demo."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "The bash command to execute"
+                        "description": "Command to run (e.g. 'npm install', 'git status')",
                     }
                 },
-                "required": ["command"]
-            }
-        }
+                "required": ["command"],
+            },
+        },
     },
 ]
 

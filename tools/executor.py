@@ -8,6 +8,7 @@ built-in tool execution capabilities.
 
 import glob
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -50,29 +51,41 @@ class ToolExecutor:
         """
         try:
             if tool_name == "read_file":
-                return self._read_file(arguments["path"])
-            elif tool_name == "write_file":
+                return self._read_file(
+                    path=arguments["path"],
+                    offset=arguments.get("offset"),
+                    limit=arguments.get("limit"),
+                )
+            if tool_name == "write_file":
                 return self._write_file(arguments["path"], arguments["content"])
-            elif tool_name == "edit_file":
+            if tool_name == "edit_file":
                 return self._edit_file(
-                    arguments["path"],
-                    arguments["old_string"],
-                    arguments["new_string"]
+                    path=arguments["path"],
+                    old_string=arguments["old_string"],
+                    new_string=arguments["new_string"],
+                    replace_all=arguments.get("replace_all", False),
                 )
-            elif tool_name == "list_directory":
-                return self._list_directory(arguments["path"])
-            elif tool_name == "search_files":
-                return self._search_files(arguments["pattern"])
-            elif tool_name == "search_content":
-                return self._search_content(
-                    arguments["pattern"],
-                    arguments["path"],
-                    arguments.get("include")
+            if tool_name == "glob_search":
+                return self._glob_search(arguments["pattern"], arguments.get("path"))
+            if tool_name == "grep_search":
+                return self._grep_search(
+                    pattern=arguments["pattern"],
+                    path=arguments.get("path"),
+                    glob_pattern=arguments.get("glob"),
+                    file_type=arguments.get("type"),
+                    output_mode=arguments.get("output_mode", "files_with_matches"),
+                    before=arguments.get("-B"),
+                    after=arguments.get("-A"),
+                    context=arguments.get("-C"),
+                    line_numbers=arguments.get("-n"),
+                    ignore_case=arguments.get("-i"),
+                    head_limit=arguments.get("head_limit"),
+                    offset=arguments.get("offset"),
+                    multiline=arguments.get("multiline", False),
                 )
-            elif tool_name == "bash":
+            if tool_name == "bash":
                 return self._run_bash(arguments["command"])
-            else:
-                return {"error": f"Unknown tool: {tool_name}"}
+            return {"error": f"Unknown tool: {tool_name}"}
         except SecurityError as e:
             return {"error": f"Security violation: {str(e)}"}
         except Exception as e:
@@ -102,8 +115,8 @@ class ToolExecutor:
         
         return resolved
     
-    def _read_file(self, path: str) -> dict[str, Any]:
-        """Read a file's contents."""
+    def _read_file(self, path: str, offset: int | None, limit: int | None) -> dict[str, Any]:
+        """Read a file's contents with optional pagination."""
         file_path = self._validate_path(path)
         
         if not file_path.exists():
@@ -114,9 +127,32 @@ class ToolExecutor:
         
         try:
             content = file_path.read_text(encoding="utf-8")
-            return {"result": content}
         except UnicodeDecodeError:
             return {"error": f"Cannot read binary file: {path}"}
+        
+        if offset is not None and offset < 0:
+            return {"error": "Offset must be zero or positive"}
+        if limit is not None and limit < 1:
+            return {"error": "Limit must be positive"}
+
+        if offset is None and limit is None:
+            return {"result": content}
+        
+        lines = content.splitlines()
+        total_lines = len(lines)
+        start = max(offset or 0, 0)
+        if total_lines == 0:
+            if start == 0:
+                return {"result": "[lines 0-0 of 0] (file is empty)"}
+            return {"error": "Offset beyond end of file (file is empty)"}
+        if start >= total_lines:
+            return {
+                "error": f"Offset {start} beyond end of file (total {total_lines} lines)"
+            }
+        end = start + limit if limit else total_lines
+        selected = lines[start:end]
+        header = f"[lines {start + 1}-{min(end, total_lines)} of {total_lines}]\n"
+        return {"result": header + "\n".join(selected)}
     
     def _write_file(self, path: str, content: str) -> dict[str, Any]:
         """Write content to a file."""
@@ -128,7 +164,13 @@ class ToolExecutor:
         file_path.write_text(content, encoding="utf-8")
         return {"result": f"Successfully wrote {len(content)} bytes to {path}"}
     
-    def _edit_file(self, path: str, old_string: str, new_string: str) -> dict[str, Any]:
+    def _edit_file(
+        self,
+        path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool,
+    ) -> dict[str, Any]:
         """Make a targeted edit to a file."""
         file_path = self._validate_path(path)
         
@@ -137,95 +179,147 @@ class ToolExecutor:
         
         content = file_path.read_text(encoding="utf-8")
         
-        # Check that old_string exists exactly once
-        count = content.count(old_string)
-        if count == 0:
-            return {"error": f"String not found in file: {old_string[:100]}..."}
-        if count > 1:
-            return {"error": f"String found {count} times, must be unique for safe editing"}
+        occurrences = content.count(old_string)
+        if occurrences == 0:
+            preview = old_string[:100] + ("..." if len(old_string) > 100 else "")
+            return {"error": f"String not found in file: {preview}"}
         
-        # Perform the replacement
-        new_content = content.replace(old_string, new_string)
-        file_path.write_text(new_content, encoding="utf-8")
-        
-        return {"result": f"Successfully edited {path}"}
-    
-    def _list_directory(self, path: str) -> dict[str, Any]:
-        """List directory contents."""
-        dir_path = self._validate_path(path)
-        
-        if not dir_path.exists():
-            return {"error": f"Directory not found: {path}"}
-        
-        if not dir_path.is_dir():
-            return {"error": f"Not a directory: {path}"}
-        
-        entries = []
-        for entry in sorted(dir_path.iterdir()):
-            entry_type = "dir" if entry.is_dir() else "file"
-            entries.append(f"[{entry_type}] {entry.name}")
-        
-        return {"result": "\n".join(entries) if entries else "(empty directory)"}
-    
-    def _search_files(self, pattern: str) -> dict[str, Any]:
-        """Search for files matching a glob pattern."""
-        # Use glob from project directory
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(self.project_dir)
-            matches = glob.glob(pattern, recursive=True)
-            
-            if not matches:
-                return {"result": "No files found matching pattern"}
-            
-            return {"result": "\n".join(sorted(matches))}
-        finally:
-            os.chdir(old_cwd)
-    
-    def _search_content(
-        self, 
-        pattern: str, 
-        path: str, 
-        include: str | None = None
-    ) -> dict[str, Any]:
-        """Search for pattern in file contents."""
-        search_path = self._validate_path(path)
-        
-        if not search_path.exists():
-            return {"error": f"Path not found: {path}"}
-        
-        results = []
-        
-        # Determine files to search
-        if search_path.is_file():
-            files = [search_path]
+        if not replace_all:
+            new_content = content.replace(old_string, new_string, 1)
+            replaced = 1
         else:
-            if include:
-                files = list(search_path.rglob(include))
-            else:
-                files = [f for f in search_path.rglob("*") if f.is_file()]
+            new_content = content.replace(old_string, new_string)
+            replaced = occurrences
         
-        # Search each file
-        for file_path in files:
+        file_path.write_text(new_content, encoding="utf-8")
+        return {"result": f"Replaced {replaced} occurrence(s) in {path}"}
+    
+    def _glob_search(self, pattern: str, path: str | None) -> dict[str, Any]:
+        """Search for files/directories matching a glob pattern."""
+        base_dir = self.project_dir if not path else self._validate_path(path)
+        if not base_dir.exists():
+            return {"error": f"Directory not found: {path or '.'}"}
+        if not base_dir.is_dir():
+            return {"error": f"Not a directory: {path or '.'}"}
+
+        matches: list[str] = []
+        for entry in glob.iglob(pattern, root_dir=str(base_dir), recursive=True):
+            full_path = (base_dir / entry).resolve()
             try:
-                content = file_path.read_text(encoding="utf-8")
-                for i, line in enumerate(content.splitlines(), 1):
-                    if pattern in line:
-                        rel_path = file_path.relative_to(self.project_dir)
-                        results.append(f"{rel_path}:{i}: {line.strip()}")
-            except (UnicodeDecodeError, PermissionError):
-                # Skip binary files and permission errors
+                rel_path = full_path.relative_to(self.project_dir)
+            except ValueError:
+                # Ignore entries that somehow escape the sandbox
                 continue
-        
-        if not results:
+            matched = str(rel_path)
+            if not matched:
+                matched = "."
+            matches.append(matched)
+
+        if not matches:
             return {"result": "No matches found"}
-        
-        # Limit results to prevent overwhelming output
-        if len(results) > 100:
-            results = results[:100]
-            results.append(f"... and more (showing first 100 matches)")
-        
-        return {"result": "\n".join(results)}
+
+        matches = sorted(set(matches))
+        return {"result": "\n".join(matches)}
+
+    def _grep_search(
+        self,
+        pattern: str,
+        path: str | None,
+        glob_pattern: str | None,
+        file_type: str | None,
+        output_mode: str,
+        before: int | None,
+        after: int | None,
+        context: int | None,
+        line_numbers: bool | None,
+        ignore_case: bool | None,
+        head_limit: int | None,
+        offset: int | None,
+        multiline: bool,
+    ) -> dict[str, Any]:
+        """Search file contents using ripgrep."""
+        if shutil.which("rg") is None:
+            return {"error": "ripgrep (rg) is not installed"}
+
+        if head_limit is not None and head_limit < 1:
+            return {"error": "head_limit must be positive"}
+        if offset is not None and offset < 0:
+            return {"error": "offset must be zero or positive"}
+
+        target_path = self._validate_path(path or ".")
+        relative_target = "."
+        try:
+            relative_target = str(target_path.relative_to(self.project_dir)) or "."
+        except ValueError:
+            # Should not happen due to _validate_path, but guard anyway
+            relative_target = str(target_path)
+
+        cmd = ["rg", "--color", "never"]
+
+        if glob_pattern:
+            cmd.extend(["--glob", glob_pattern])
+        if file_type:
+            cmd.extend(["--type", file_type])
+        if context is not None:
+            cmd.extend(["-C", str(context)])
+        else:
+            if before is not None:
+                cmd.extend(["-B", str(before)])
+            if after is not None:
+                cmd.extend(["-A", str(after)])
+
+        effective_mode = output_mode or "files_with_matches"
+        if effective_mode not in {"content", "files_with_matches", "count"}:
+            return {"error": f"Invalid output_mode: {effective_mode}"}
+        if effective_mode == "files_with_matches":
+            cmd.append("-l")
+        elif effective_mode == "count":
+            cmd.append("-c")
+        else:
+            # content mode
+            show_numbers = line_numbers
+            if show_numbers is None:
+                show_numbers = True
+            if show_numbers:
+                cmd.append("-n")
+
+        if ignore_case:
+            cmd.append("-i")
+        if multiline:
+            cmd.extend(["-U", "--multiline-dotall"])
+
+        cmd.append(pattern)
+        cmd.append(relative_target)
+
+        result = subprocess.run(
+            cmd,
+            cwd=self.project_dir,
+            capture_output=True,
+            text=True,
+        )
+
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+
+        if result.returncode not in (0, 1):
+            return {"error": stderr or f"rg failed with exit code {result.returncode}"}
+
+        if result.returncode == 1 and not stdout:
+            return {"result": "No matches found"}
+
+        lines = stdout.splitlines()
+        start = max(offset or 0, 0)
+        if start >= len(lines):
+            return {"error": "Offset skips all output"}
+        end = start + head_limit if head_limit else len(lines)
+        sliced = lines[start:end]
+        if head_limit and len(lines) > end:
+            sliced.append("... (results truncated)")
+
+        output = "\n".join(sliced)
+        if stderr:
+            output = f"{output}\n[stderr]: {stderr}"
+        return {"result": output or "(no output)"}
     
     def _run_bash(self, command: str) -> dict[str, Any]:
         """
