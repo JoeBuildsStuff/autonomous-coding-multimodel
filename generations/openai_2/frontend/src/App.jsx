@@ -149,7 +149,7 @@ export default function App(){
         </div>
         <div style={{ marginTop:12, display:'flex', alignItems:'center', gap:8 }}>
           <textarea
-            ref={(node)=>{ inputRef.current = node; textAreaRef.current = node; }}
+            ref={(node)=>{ inputRef.current = node; textAreaRef.current = node; }} id="chat-input"
             value={input}
             onChange={(e)=>setInput(e.target.value)}
             onKeyDown={onKeyDown}
@@ -165,7 +165,7 @@ export default function App(){
           {/* Pause/Resume toggle for streaming */}
           {isStreaming && (
             <button
-              onClick={() => setIsPaused(p => !p)}
+              id="pause-btn" onClick={() => setIsPaused(p => !p)}
               style={{ padding:'12px 16px', borderRadius:8, border:'1px solid #999', background:'#fff', color:'#333', fontWeight:600, cursor:'pointer' }}
               aria-label={isPaused ? "Resume streaming" : "Pause streaming"}
             >
