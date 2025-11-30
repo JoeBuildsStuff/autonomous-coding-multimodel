@@ -205,7 +205,11 @@ export default function App(){
           </div>
         )}
         <div style={{ alignSelf:'flex-end', marginTop:8, fontSize:12, color:'#555' }}>
-          Characters: {charCount} / {MAX_CHARS}  -  Est. tokens: {Math.ceil(charCount / 4)}
+          {input.trim().length > 0 && (
+            <>
+              Characters: {charCount} / {MAX_CHARS}  -  Est. tokens: {Math.ceil(charCount / 4)}
+            </>
+          )}
         </div>
       </div>
       <style>{`@keyframes blink { 0% { opacity: 0.2 } 50% { opacity: 1 } 100% { opacity: 0.2 } }`}</style>
