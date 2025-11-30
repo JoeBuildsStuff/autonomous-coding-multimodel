@@ -43,6 +43,28 @@ chmod +x init.sh
 
 Otherwise, start servers manually and document the process.
 
+### SANDBOX CONSTRAINTS – READ **BEFORE** RUNNING COMMANDS
+
+You are operating inside a restricted shell. Only the following commands are allowed:
+
+```
+ls, cat, head, tail, wc, grep
+cp, mkdir, chmod
+pwd
+npm, node
+git
+ps, lsof, sleep, pkill
+./init.sh
+```
+
+This means:
+- **No `cd`, `echo`, `true`, `npx`, `curl`, or `kill`.** If you need to work in a subdirectory, run commands with explicit relative paths (e.g., `ls frontend/src`).
+- **Process cleanup must use `pkill`** with the exact process name (e.g., `pkill -f 'node server/index.js'`).
+- **HTTP checks must happen via the browser tools, not `curl`.**
+- **Long-running commands (`npm run dev`, `node server/index.js`) will time out after ~5 minutes.** Prefer single-run commands (e.g., `npm run build`) and serving prebuilt assets, or restart them only when you are ready to interact immediately.
+
+Plan every shell invocation so it can succeed within these limits. When a command is blocked, rethink the workflow instead of repeatedly retrying.
+
 ### STEP 3: VERIFICATION TEST (CRITICAL!)
 
 **MANDATORY BEFORE NEW WORK:**

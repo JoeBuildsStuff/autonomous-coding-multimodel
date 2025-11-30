@@ -6,12 +6,13 @@ Executes tools on behalf of non-Claude providers that don't have
 built-in tool execution capabilities.
 """
 
+import asyncio
 import glob
 import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from security import validate_bash_command
 
@@ -27,16 +28,32 @@ class ToolExecutor:
     
     All file operations are restricted to the project directory.
     Bash commands are validated against a security allowlist.
+    Browser tools are optionally available via MCP adapter.
     """
     
-    def __init__(self, project_dir: Path):
+    def __init__(
+        self,
+        project_dir: Path,
+        mcp_adapter: Optional[Any] = None,  # MCPAdapter, avoid circular import
+    ):
         """
         Initialize the tool executor.
         
         Args:
             project_dir: The project directory (all operations are sandboxed here)
+            mcp_adapter: Optional MCP adapter for browser tools
         """
         self.project_dir = project_dir.resolve()
+        self._mcp_adapter = mcp_adapter
+    
+    def set_mcp_adapter(self, adapter: Any) -> None:
+        """
+        Set the MCP adapter for browser tools.
+        
+        Args:
+            adapter: An MCPAdapter instance
+        """
+        self._mcp_adapter = adapter
     
     def execute(self, tool_name: str, arguments: dict) -> dict[str, Any]:
         """
@@ -49,6 +66,11 @@ class ToolExecutor:
         Returns:
             Dict with 'result' or 'error' key
         """
+        # Check if this is a browser tool
+        if self._is_browser_tool(tool_name):
+            return self._execute_browser_tool(tool_name, arguments)
+        
+        # Handle standard tools
         try:
             if tool_name == "read_file":
                 return self._read_file(
@@ -90,6 +112,122 @@ class ToolExecutor:
             return {"error": f"Security violation: {str(e)}"}
         except Exception as e:
             return {"error": f"Tool execution failed: {str(e)}"}
+    
+    def _is_browser_tool(self, tool_name: str) -> bool:
+        """Check if a tool is a browser automation tool."""
+        browser_tools = {
+            "puppeteer_connect_active_tab",
+            "puppeteer_navigate",
+            "puppeteer_screenshot",
+            "puppeteer_click",
+            "puppeteer_fill",
+            "puppeteer_select",
+            "puppeteer_hover",
+            "puppeteer_evaluate",
+        }
+        
+        # Handle prefixed names
+        if tool_name.startswith("mcp__puppeteer__"):
+            tool_name = tool_name.replace("mcp__puppeteer__", "")
+        
+        return tool_name in browser_tools
+    
+    def _execute_browser_tool(self, tool_name: str, arguments: dict) -> dict[str, Any]:
+        """
+        Execute a browser automation tool via MCP adapter.
+        
+        Args:
+            tool_name: Browser tool name
+            arguments: Tool arguments
+            
+        Returns:
+            Dict with 'result' or 'error' key
+        """
+        if not self._mcp_adapter:
+            return {
+                "error": (
+                    "Browser tools are not enabled. "
+                    "Start with --enable-browser flag to use browser automation."
+                )
+            }
+        
+        # Run the async call in an event loop
+        try:
+            # Check if we're already in an event loop
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            
+            if loop:
+                # We're in an async context, create a task
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    future = pool.submit(
+                        asyncio.run,
+                        self._mcp_adapter.call_tool(tool_name, arguments)
+                    )
+                    return future.result(timeout=60)
+            else:
+                # We're not in an async context
+                return asyncio.run(
+                    self._mcp_adapter.call_tool(tool_name, arguments)
+                )
+        except Exception as e:
+            return {"error": f"Browser tool execution failed: {str(e)}"}
+    
+    async def execute_async(self, tool_name: str, arguments: dict) -> dict[str, Any]:
+        """
+        Execute a tool asynchronously.
+        
+        This is the preferred method when running in an async context,
+        especially for browser tools.
+        
+        Args:
+            tool_name: Name of the tool to execute
+            arguments: Tool arguments
+            
+        Returns:
+            Dict with 'result' or 'error' key
+        """
+        # Check if this is a browser tool
+        if self._is_browser_tool(tool_name):
+            return await self._execute_browser_tool_async(tool_name, arguments)
+        
+        # For sync tools, run in executor to avoid blocking
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self.execute(tool_name, arguments)
+        )
+    
+    async def _execute_browser_tool_async(
+        self,
+        tool_name: str,
+        arguments: dict
+    ) -> dict[str, Any]:
+        """
+        Execute a browser tool asynchronously.
+        
+        Args:
+            tool_name: Browser tool name
+            arguments: Tool arguments
+            
+        Returns:
+            Dict with 'result' or 'error' key
+        """
+        if not self._mcp_adapter:
+            return {
+                "error": (
+                    "Browser tools are not enabled. "
+                    "Start with --enable-browser flag to use browser automation."
+                )
+            }
+        
+        try:
+            return await self._mcp_adapter.call_tool(tool_name, arguments)
+        except Exception as e:
+            return {"error": f"Browser tool execution failed: {str(e)}"}
     
     def _validate_path(self, path: str) -> Path:
         """

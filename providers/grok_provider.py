@@ -14,13 +14,15 @@ Models:
 - grok-3-mini: Smaller model, supports reasoning_effort parameter
 
 Note: Only grok-3-mini supports the reasoning_effort parameter.
-Other models use -reasoning/-non-reasoning variants instead.
+Other models use -reasoning/-non-reasoning model variants instead.
+
+Browser automation via puppeteer-mcp-server is enabled by default.
 """
 
 import json
 import os
 from pathlib import Path
-from typing import AsyncIterator, Any, List
+from typing import AsyncIterator, Any, List, Optional
 
 from openai import OpenAI
 
@@ -32,19 +34,34 @@ from .base import (
     ToolUseBlock,
     ToolResultBlock,
 )
-from tools import get_tool_definitions, ToolExecutor
+from tools import (
+    get_tool_definitions,
+    get_all_tool_definitions,
+    ToolExecutor,
+    PuppeteerMCPAdapter,
+    MCPError,
+)
 
 
-# System prompt for coding tasks
+# System prompt for coding tasks (includes browser tools by default)
 SYSTEM_PROMPT = """You are an expert full-stack developer building a production-quality web application.
 
-You have access to tools to read, write, and edit files, search for files and content, and run bash commands.
+You have access to tools to read, write, and edit files, search for files and content, run bash commands, and control a browser.
+
+Browser Tools:
+- puppeteer_navigate: Navigate to a URL
+- puppeteer_click: Click an element by CSS selector
+- puppeteer_fill: Fill an input field
+- puppeteer_screenshot: Take a screenshot
+- puppeteer_evaluate: Execute JavaScript in the browser
+- puppeteer_connect_active_tab: Connect to an existing Chrome instance
 
 When working on tasks:
 1. Read existing files to understand the codebase before making changes
 2. Make targeted edits when possible rather than rewriting entire files
 3. Use bash commands to run npm, git, and other development tools
 4. Test your changes by running the application when appropriate
+5. Use browser tools to verify the UI and test user interactions
 
 Always explain what you're doing and why before using tools."""
 
@@ -54,13 +71,25 @@ class GrokProvider(BaseProvider):
     Provider for xAI's Grok models.
     
     Uses the OpenAI-compatible API at api.x.ai.
+    
+    Browser automation via puppeteer-mcp-server is enabled by default.
     """
     
-    def __init__(self, model: str, project_dir: Path):
+    def __init__(
+        self,
+        model: str,
+        project_dir: Path,
+        enable_browser: bool = True,  # Default ON like original repo
+        chrome_debug_port: int = 9222,
+    ):
         super().__init__(model, project_dir)
         self._client: OpenAI | None = None
         self._tool_executor: ToolExecutor | None = None
+        self._mcp_adapter: Optional[PuppeteerMCPAdapter] = None
         self._messages: List[dict] = []
+        self._enable_browser = enable_browser
+        self._chrome_debug_port = chrome_debug_port
+        self._browser_available = False  # Track if browser tools actually started
     
     @classmethod
     def get_required_env_var(cls) -> str:
@@ -119,6 +148,25 @@ class GrokProvider(BaseProvider):
         # Ensure project directory exists
         self.project_dir.mkdir(parents=True, exist_ok=True)
         
+        # Initialize MCP adapter for browser tools (default ON)
+        if self._enable_browser:
+            try:
+                self._mcp_adapter = PuppeteerMCPAdapter(
+                    working_dir=self.project_dir
+                )
+                await self._mcp_adapter.start()
+                self._tool_executor.set_mcp_adapter(self._mcp_adapter)
+                self._browser_available = True
+            except MCPError as e:
+                # Log warning but continue - browser tools just won't be available
+                print(f"   - Warning: Browser tools unavailable ({e})")
+                print(f"   - Make sure Node.js/npx is installed")
+                self._mcp_adapter = None
+                self._browser_available = False
+        
+        # Count tools (include browser if available)
+        tool_count = len(get_all_tool_definitions(include_browser=self._browser_available))
+        
         print(f"Initialized GrokProvider")
         print(f"   - Model: {self.model}")
         if self._is_reasoning_variant:
@@ -128,16 +176,24 @@ class GrokProvider(BaseProvider):
         if self._is_grok3_mini:
             print(f"   - Reasoning effort: medium")
         print(f"   - Project directory: {self.project_dir.resolve()}")
-        print(f"   - Tools: {len(get_tool_definitions())} available")
+        print(f"   - Tools: {tool_count} available")
+        if self._browser_available:
+            print(f"   - MCP servers: puppeteer (browser automation)")
         print()
         
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context."""
+        # Stop MCP adapter if running
+        if self._mcp_adapter:
+            await self._mcp_adapter.stop()
+            self._mcp_adapter = None
+        
         self._client = None
         self._tool_executor = None
         self._messages = []
+        self._browser_available = False
     
     async def query(self, message: str) -> None:
         """Send a query and prepare for response streaming."""
@@ -165,6 +221,9 @@ class GrokProvider(BaseProvider):
         max_iterations = 100
         iteration = 0
         
+        # Get tools including browser if available
+        tools = get_all_tool_definitions(include_browser=self._browser_available)
+        
         while iteration < max_iterations:
             iteration += 1
             
@@ -172,7 +231,7 @@ class GrokProvider(BaseProvider):
             api_params = {
                 "model": self.model,
                 "messages": self._messages,
-                "tools": get_tool_definitions(),
+                "tools": tools,
                 "tool_choice": "auto",
             }
             
@@ -218,8 +277,8 @@ class GrokProvider(BaseProvider):
                 tool_name = tool_call.function.name
                 tool_args = json.loads(tool_call.function.arguments)
                 
-                # Execute the tool
-                result = self._tool_executor.execute(tool_name, tool_args)
+                # Use async execution for browser tools
+                result = await self._tool_executor.execute_async(tool_name, tool_args)
                 
                 # Format result for API
                 if "error" in result:

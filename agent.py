@@ -94,6 +94,8 @@ async def run_autonomous_agent(
     provider_name: str,
     model: str | None = None,
     max_iterations: Optional[int] = None,
+    enable_browser: bool = False,
+    chrome_debug_port: int = 9222,
 ) -> None:
     """
     Run the autonomous agent loop.
@@ -103,6 +105,8 @@ async def run_autonomous_agent(
         provider_name: Name of the LLM provider to use
         model: Model to use (defaults to provider's default)
         max_iterations: Maximum number of iterations (None for unlimited)
+        enable_browser: Whether to enable browser automation tools
+        chrome_debug_port: Chrome debugging port for browser connection
     """
     # Use default model if not specified
     if model is None:
@@ -118,6 +122,8 @@ async def run_autonomous_agent(
         print(f"Max iterations: {max_iterations}")
     else:
         print("Max iterations: Unlimited (will run until completion)")
+    if enable_browser:
+        print(f"Browser tools: Enabled (Chrome debug port: {chrome_debug_port})")
     print()
 
     # Create project directory
@@ -158,7 +164,13 @@ async def run_autonomous_agent(
         print_session_header(iteration, is_first_run)
 
         # Create provider (fresh context for each session)
-        provider = get_provider(provider_name, model, project_dir)
+        provider = get_provider(
+            provider_name,
+            model,
+            project_dir,
+            enable_browser=enable_browser,
+            chrome_debug_port=chrome_debug_port,
+        )
 
         # Choose prompt based on session type
         if is_first_run:

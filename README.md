@@ -2,6 +2,8 @@
 
 A minimal harness demonstrating long-running autonomous coding with multiple LLM providers. This demo implements a two-agent pattern (initializer + coding agent) that can build complete applications over multiple sessions.
 
+**Browser automation via puppeteer-mcp-server is enabled by default for all providers.**
+
 ## Supported Providers
 
 | Provider | Default Model | Features |
@@ -16,6 +18,14 @@ A minimal harness demonstrating long-running autonomous coding with multiple LLM
 
 ```bash
 pip install -r requirements.txt
+```
+
+**Node.js required** for browser automation (npx auto-downloads puppeteer-mcp-server):
+
+```bash
+# Check if Node.js is installed
+node --version
+npx --version
 ```
 
 **Set API keys** (only need the one for your chosen provider):
@@ -44,6 +54,9 @@ python autonomous_agent_demo.py --provider openai --model gpt-4o --project-dir .
 
 # Using Grok
 python autonomous_agent_demo.py --provider grok --project-dir ./my_project
+
+# Disable browser tools
+python autonomous_agent_demo.py --provider openai --no-browser --project-dir ./my_project
 
 # Limit iterations for testing
 python autonomous_agent_demo.py --project-dir ./my_project --max-iterations 3
@@ -79,6 +92,52 @@ python autonomous_agent_demo.py --provider openai --list-models
 - The agent auto-continues between sessions (3 second delay)
 - Press `Ctrl+C` to pause; run the same command to resume
 
+## Browser Automation
+
+**Browser tools are enabled by default for all providers**, matching the behavior of the original Anthropic-only demo. The puppeteer-mcp-server is automatically downloaded via `npx` on first use.
+
+### Available Browser Tools
+
+| Tool | Description |
+|------|-------------|
+| `puppeteer_navigate` | Navigate to a URL |
+| `puppeteer_click` | Click an element by CSS selector |
+| `puppeteer_fill` | Fill an input field |
+| `puppeteer_screenshot` | Take a screenshot |
+| `puppeteer_select` | Select a dropdown option |
+| `puppeteer_hover` | Hover over an element |
+| `puppeteer_evaluate` | Execute JavaScript in the browser |
+| `puppeteer_connect_active_tab` | Connect to existing Chrome instance |
+
+### Requirements
+
+Browser tools require Node.js/npx to be installed. The puppeteer-mcp-server package is automatically downloaded via `npx` when first needed.
+
+If Node.js is not available, the agent will log a warning and continue without browser tools.
+
+### Connecting to Existing Chrome
+
+To use `puppeteer_connect_active_tab`, start Chrome with remote debugging:
+
+```bash
+# Using the helper script
+./scripts/start_chrome_debug.sh
+
+# Or manually on macOS
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+
+# Or with a custom port
+python autonomous_agent_demo.py --chrome-debug-port=9223 --project-dir ./my_project
+```
+
+### Disabling Browser Tools
+
+If you don't need browser automation:
+
+```bash
+python autonomous_agent_demo.py --no-browser --project-dir ./my_project
+```
+
 ## Security Model
 
 Defense-in-depth security approach:
@@ -87,11 +146,13 @@ Defense-in-depth security approach:
 - OS-level sandbox via Claude Agent SDK
 - Filesystem restricted to project directory
 - Bash commands validated via security hooks
+- MCP tools (including Puppeteer) sandboxed
 
 **For OpenAI/Grok providers:**
 - Filesystem operations sandboxed to project directory
 - Bash command allowlist (see `security.py`)
 - Path traversal protection
+- MCP adapter for browser tools
 
 ### Allowed Bash Commands
 
@@ -119,8 +180,12 @@ autonomous-coding-multimodel/
 │   └── grok_provider.py     # Grok models
 ├── tools/                    # Tool execution for non-Claude providers
 │   ├── __init__.py
-│   ├── definitions.py       # Tool definitions (OpenAI format)
-│   └── executor.py          # Sandboxed tool execution
+│   ├── definitions.py       # Core tool definitions (OpenAI format)
+│   ├── browser_definitions.py # Browser tool definitions
+│   ├── executor.py          # Sandboxed tool execution
+│   └── mcp_adapter.py       # MCP protocol adapter
+├── scripts/
+│   └── start_chrome_debug.sh # Helper to start Chrome with debugging
 ├── security.py              # Bash command validation
 ├── progress.py              # Progress tracking
 ├── prompts.py               # Prompt loading
@@ -128,6 +193,10 @@ autonomous-coding-multimodel/
 │   ├── app_spec.txt         # Application specification
 │   ├── initializer_prompt.md
 │   └── coding_prompt.md
+├── docs/
+│   ├── MULTIMODEL_REFACTOR_PLAN.md
+│   ├── PUPPETEER_INTEGRATION_PLAN.md
+│   └── tools.md
 ├── requirements.txt
 └── .env.example             # API key template
 ```
@@ -141,6 +210,8 @@ autonomous-coding-multimodel/
 | `--project-dir` | Directory for the project | `./autonomous_demo_project` |
 | `--max-iterations` | Max agent iterations | Unlimited |
 | `--list-models` | List models for provider | - |
+| `--no-browser` | Disable browser automation | Enabled by default |
+| `--chrome-debug-port` | Chrome debugging port | `9222` |
 
 ## Customization
 
@@ -167,7 +238,7 @@ Edit `security.py` to add or remove commands from `ALLOWED_COMMANDS`.
 | Feature | Anthropic | OpenAI | Grok |
 |---------|-----------|--------|------|
 | Sandbox | OS-level (Docker) | Path validation | Path validation |
-| MCP Tools | ✅ Puppeteer | ❌ | ❌ |
+| Browser Tools | ✅ Built-in MCP | ✅ MCP Adapter | ✅ MCP Adapter |
 | Security Hooks | ✅ Pre-tool | Manual validation | Manual validation |
 | Streaming | ✅ | Coming soon | Coming soon |
 
@@ -184,6 +255,19 @@ Check available providers with `--provider` choices.
 
 **Model errors**
 Use `--list-models` to see available models for your provider.
+
+**"Warning: Browser tools unavailable"**
+Make sure Node.js and npx are installed. The puppeteer-mcp-server is auto-downloaded via npx.
+
+**"MCP server error" or "MCP communication failed"**
+- Check that Node.js/npx is installed: `npx --version`
+- Try running `npx puppeteer-mcp-server` manually to see error messages
+- Ensure Chrome is installed if using headless browser features
+
+**"Port 9222 is already in use"**
+- Chrome may already be running with debugging
+- Use a different port: `--chrome-debug-port=9223`
+- Or close existing Chrome instances
 
 ## License
 

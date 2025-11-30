@@ -26,6 +26,7 @@ from security import bash_security_hook
 
 # Puppeteer MCP tools for browser automation
 PUPPETEER_TOOLS = [
+    "mcp__puppeteer__puppeteer_connect_active_tab",
     "mcp__puppeteer__puppeteer_navigate",
     "mcp__puppeteer__puppeteer_screenshot",
     "mcp__puppeteer__puppeteer_click",

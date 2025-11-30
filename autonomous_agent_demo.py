@@ -7,11 +7,13 @@ A minimal harness demonstrating long-running autonomous coding with multiple LLM
 This script implements the two-agent pattern (initializer + coding agent) and
 supports Anthropic (Claude), OpenAI, and Grok models.
 
+Browser automation via puppeteer-mcp-server is enabled by default for all providers.
+
 Example Usage:
     # Using Claude (default)
     python autonomous_agent_demo.py --project-dir ./my_project
     
-    # Using OpenAI
+    # Using OpenAI GPT-4o
     python autonomous_agent_demo.py --provider openai --model gpt-4o --project-dir ./my_project
     
     # Using Grok
@@ -23,13 +25,19 @@ import asyncio
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from agent import run_autonomous_agent
 from providers import (
+    get_available_models,
     get_available_providers,
     get_default_model,
     get_required_env_var,
-    get_available_models,
 )
+
+
+# Load API keys from a local .env so CLI commands don't need manual exports
+load_dotenv()
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,11 +56,25 @@ Examples:
   # Use Grok
   python autonomous_agent_demo.py --provider grok --project-dir ./my_app
 
+  # Disable browser automation (if puppeteer-mcp-server not installed)
+  python autonomous_agent_demo.py --provider openai --no-browser --project-dir ./my_app
+
   # Limit iterations for testing
   python autonomous_agent_demo.py --project-dir ./my_app --max-iterations 3
 
   # List available models for a provider
   python autonomous_agent_demo.py --provider openai --list-models
+
+Browser Automation:
+  Browser tools via puppeteer-mcp-server are ENABLED BY DEFAULT for all providers.
+  
+  For non-Claude providers, install puppeteer-mcp-server:
+    npm install -g puppeteer-mcp-server
+  
+  If not installed, the agent will continue without browser tools.
+  
+  To connect to existing Chrome (for puppeteer_connect_active_tab):
+    /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222
 
 Environment Variables:
   ANTHROPIC_API_KEY    For Claude models (anthropic provider)
@@ -94,6 +116,20 @@ Environment Variables:
         "--list-models",
         action="store_true",
         help="List available models for the selected provider and exit",
+    )
+
+    # Browser automation options (default ON)
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Disable browser automation tools (enabled by default)",
+    )
+
+    parser.add_argument(
+        "--chrome-debug-port",
+        type=int,
+        default=9222,
+        help="Chrome remote debugging port for puppeteer_connect_active_tab (default: 9222)",
     )
 
     return parser.parse_args()
@@ -143,6 +179,9 @@ def main() -> None:
     # Use default model if not specified
     model = args.model or get_default_model(args.provider)
 
+    # Browser is enabled by default (use --no-browser to disable)
+    enable_browser = not args.no_browser
+
     # Run the agent
     try:
         asyncio.run(
@@ -151,6 +190,8 @@ def main() -> None:
                 provider_name=args.provider,
                 model=model,
                 max_iterations=args.max_iterations,
+                enable_browser=enable_browser,
+                chrome_debug_port=args.chrome_debug_port,
             )
         )
     except KeyboardInterrupt:

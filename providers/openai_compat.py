@@ -9,7 +9,7 @@ including OpenAI and Grok.
 import json
 import os
 from pathlib import Path
-from typing import AsyncIterator, Any, List
+from typing import AsyncIterator, Any, List, Optional
 from abc import abstractmethod
 
 from openai import OpenAI
@@ -22,7 +22,13 @@ from .base import (
     ToolUseBlock,
     ToolResultBlock,
 )
-from tools import get_tool_definitions, ToolExecutor
+from tools import (
+    get_tool_definitions,
+    get_all_tool_definitions,
+    ToolExecutor,
+    PuppeteerMCPAdapter,
+    MCPError,
+)
 
 
 # System prompt for coding tasks
@@ -35,6 +41,29 @@ When working on tasks:
 2. Make targeted edits when possible rather than rewriting entire files
 3. Use bash commands to run npm, git, and other development tools
 4. Test your changes by running the application when appropriate
+
+Always explain what you're doing and why before using tools."""
+
+
+# Extended system prompt when browser tools are enabled
+SYSTEM_PROMPT_WITH_BROWSER = """You are an expert full-stack developer building a production-quality web application.
+
+You have access to tools to read, write, and edit files, search for files and content, run bash commands, and control a browser.
+
+Browser Tools:
+- puppeteer_navigate: Navigate to a URL
+- puppeteer_click: Click an element by CSS selector
+- puppeteer_fill: Fill an input field
+- puppeteer_screenshot: Take a screenshot
+- puppeteer_evaluate: Execute JavaScript in the browser
+- puppeteer_connect_active_tab: Connect to an existing Chrome instance
+
+When working on tasks:
+1. Read existing files to understand the codebase before making changes
+2. Make targeted edits when possible rather than rewriting entire files
+3. Use bash commands to run npm, git, and other development tools
+4. Test your changes by running the application when appropriate
+5. Use browser tools to verify the UI and test user interactions
 
 Always explain what you're doing and why before using tools."""
 
@@ -52,12 +81,30 @@ class OpenAICompatibleProvider(BaseProvider):
     - get_default_model(): Return default model identifier
     """
     
-    def __init__(self, model: str, project_dir: Path):
+    def __init__(
+        self,
+        model: str,
+        project_dir: Path,
+        enable_browser: bool = False,
+        chrome_debug_port: int = 9222,
+    ):
+        """
+        Initialize the provider.
+        
+        Args:
+            model: Model identifier
+            project_dir: Project directory for sandboxing
+            enable_browser: Whether to enable browser automation tools
+            chrome_debug_port: Chrome debugging port for browser connection
+        """
         super().__init__(model, project_dir)
         self._client: OpenAI | None = None
         self._tool_executor: ToolExecutor | None = None
+        self._mcp_adapter: Optional[PuppeteerMCPAdapter] = None
         self._messages: List[dict] = []
         self._pending_response: List[Any] | None = None
+        self._enable_browser = enable_browser
+        self._chrome_debug_port = chrome_debug_port
     
     @abstractmethod
     def _create_client(self) -> OpenAI:
@@ -73,16 +120,40 @@ class OpenAICompatibleProvider(BaseProvider):
         # Ensure project directory exists
         self.project_dir.mkdir(parents=True, exist_ok=True)
         
+        # Initialize MCP adapter for browser tools if enabled
+        if self._enable_browser:
+            try:
+                self._mcp_adapter = PuppeteerMCPAdapter(
+                    working_dir=self.project_dir
+                )
+                await self._mcp_adapter.start()
+                self._tool_executor.set_mcp_adapter(self._mcp_adapter)
+                
+                print(f"   - Browser tools: enabled (puppeteer-mcp-server)")
+                print(f"   - Chrome debug port: {self._chrome_debug_port}")
+            except MCPError as e:
+                print(f"   - Browser tools: failed to start ({e})")
+                self._mcp_adapter = None
+        
+        tool_count = len(get_all_tool_definitions(include_browser=self._enable_browser))
+        
         print(f"Initialized {self.__class__.__name__}")
         print(f"   - Model: {self.model}")
         print(f"   - Project directory: {self.project_dir.resolve()}")
-        print(f"   - Tools: {len(get_tool_definitions())} available")
+        print(f"   - Tools: {tool_count} available")
+        if self._enable_browser and not self._mcp_adapter:
+            print(f"   - Note: Browser tools requested but not available")
         print()
         
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit async context."""
+        # Stop MCP adapter if running
+        if self._mcp_adapter:
+            await self._mcp_adapter.stop()
+            self._mcp_adapter = None
+        
         self._client = None
         self._tool_executor = None
         self._messages = []
@@ -99,9 +170,13 @@ class OpenAICompatibleProvider(BaseProvider):
         
         # Add system message if this is the first message
         if not self._messages:
+            system_prompt = (
+                SYSTEM_PROMPT_WITH_BROWSER if self._enable_browser
+                else SYSTEM_PROMPT
+            )
             self._messages.append({
                 "role": "system",
-                "content": SYSTEM_PROMPT
+                "content": system_prompt
             })
         
         # Add the user message
@@ -129,6 +204,9 @@ class OpenAICompatibleProvider(BaseProvider):
         max_iterations = 100  # Safety limit
         iteration = 0
         
+        # Get tool definitions including browser tools if enabled
+        tools = get_all_tool_definitions(include_browser=self._enable_browser)
+        
         while iteration < max_iterations:
             iteration += 1
             
@@ -136,7 +214,7 @@ class OpenAICompatibleProvider(BaseProvider):
             response = self._client.chat.completions.create(
                 model=self.model,
                 messages=self._messages,
-                tools=get_tool_definitions(),
+                tools=tools,
                 tool_choice="auto",
             )
             
@@ -174,8 +252,8 @@ class OpenAICompatibleProvider(BaseProvider):
                 tool_name = tool_call.function.name
                 tool_args = json.loads(tool_call.function.arguments)
                 
-                # Execute the tool
-                result = self._tool_executor.execute(tool_name, tool_args)
+                # Use async execution for browser tools
+                result = await self._tool_executor.execute_async(tool_name, tool_args)
                 
                 # Format result for API
                 if "error" in result:
