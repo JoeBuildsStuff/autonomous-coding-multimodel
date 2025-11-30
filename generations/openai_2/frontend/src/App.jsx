@@ -14,6 +14,7 @@ export default function App(){
   const [isStreaming, setIsStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
   const [hasFocus, setHasFocus] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
 
   // auto-scroll
   useEffect(() => {
@@ -80,6 +81,10 @@ export default function App(){
           return updated;
         });
         setStreamText('');
+        return;
+      }
+      if(isPaused){
+        // do not advance streaming while paused
         return;
       }
       const nextWord = words[i];
@@ -157,6 +162,16 @@ export default function App(){
           <button onClick={sendMessage} style={{ padding:'12px 16px', borderRadius:8, border:'none', background:'#0b5ed7', color:'#fff', fontWeight:600, cursor:'pointer' }} disabled={input.trim().length===0 || isStreaming || input.length>MAX_CHARS}>
             Send
           </button>
+          {/* Pause/Resume toggle for streaming */}
+          {isStreaming && (
+            <button
+              onClick={() => setIsPaused(p => !p)}
+              style={{ padding:'12px 16px', borderRadius:8, border:'1px solid #999', background:'#fff', color:'#333', fontWeight:600, cursor:'pointer' }}
+              aria-label={isPaused ? "Resume streaming" : "Pause streaming"}
+            >
+              {isPaused ? 'Resume' : 'Pause'}
+            </button>
+          )}
           {/* Clear chat button to reset UI state and messages */}
           <button
             onClick={() => {
@@ -170,6 +185,7 @@ export default function App(){
               ])
               setInput('')
               setStreamText('')
+              setIsPaused(false)
             }}
             style={{ padding:'12px 16px', borderRadius:8, border:'1px solid #ccc', background:'#fff', color:'#333', fontWeight:600, cursor:'pointer' }}
             aria-label="Clear chat"
@@ -185,7 +201,7 @@ export default function App(){
         {isStreaming && (
           <div style={{ marginTop:8, color:'#555', display:'flex', alignItems:'center', gap:8 }}>
             <span className="dot" style={{ width:8, height:8, borderRadius:4, background:'#888', display:'inline-block', animation:'blink 1s infinite' }}></span>
-            <span>Claude is typing{streamText ? ': ' + streamText : ''}</span>
+            <span>Claude is typing{streamText ? ': ' + streamText : ''}{isPaused ? ' (paused)' : ''}</span>
           </div>
         )}
         <div style={{ alignSelf:'flex-end', marginTop:8, fontSize:12, color:'#555' }}>
