@@ -174,7 +174,7 @@ export default function App(){
             style={{ padding:'12px 16px', borderRadius:8, border:'1px solid #ccc', background:'#fff', color:'#333', fontWeight:600, cursor:'pointer' }}
             aria-label="Clear chat"
           >
-            Clear
+            Clear chat
           </button>
           {isStreaming && (
             <button onClick={stopStreaming} style={{ padding:'12px 16px', borderRadius:8, border:'1px solid #999', background:'#fff', color:'#333', fontWeight:600, cursor:'pointer' }} aria-label="Stop streaming">
