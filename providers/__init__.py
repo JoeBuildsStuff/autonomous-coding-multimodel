@@ -42,6 +42,7 @@ def get_provider(
     project_dir: Path,
     enable_browser: bool = True,  # Default ON like original repo
     chrome_debug_port: int = 9222,
+    verbose: bool = False,
 ) -> BaseProvider:
     """
     Factory function to create a provider instance.
@@ -52,6 +53,7 @@ def get_provider(
         project_dir: Project directory for sandboxing
         enable_browser: Whether to enable browser automation tools (default: True)
         chrome_debug_port: Chrome debugging port for browser connection
+        verbose: Whether to print full JSON responses (for debugging)
         
     Returns:
         Configured provider instance
@@ -70,7 +72,7 @@ def get_provider(
     
     # Anthropic provider doesn't need extra browser flags (handled via MCP config)
     if provider_name == "anthropic":
-        return provider_class(model=model, project_dir=project_dir)
+        return provider_class(model=model, project_dir=project_dir, verbose=verbose)
     
     # OpenAI and Grok providers support browser flags
     return provider_class(
@@ -78,6 +80,7 @@ def get_provider(
         project_dir=project_dir,
         enable_browser=enable_browser,
         chrome_debug_port=chrome_debug_port,
+        verbose=verbose,
     )
 
 

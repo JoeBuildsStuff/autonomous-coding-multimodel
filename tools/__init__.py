@@ -16,6 +16,7 @@ from .browser_definitions import (
 )
 from .executor import ToolExecutor, SecurityError
 from .mcp_adapter import MCPAdapter, MCPError, PuppeteerMCPAdapter
+from .sdk_tools import SDK_TOOLS, set_executor
 
 __all__ = [
     # Core tool definitions
@@ -37,6 +38,9 @@ __all__ = [
     "MCPAdapter",
     "MCPError",
     "PuppeteerMCPAdapter",
+    # SDK tools (for OpenAI Agents SDK)
+    "SDK_TOOLS",
+    "set_executor",
 ]
 
 

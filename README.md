@@ -63,17 +63,21 @@ python autonomous_agent_demo.py --project-dir ./my_project --max-iterations 3
 
 # List available models for a provider
 python autonomous_agent_demo.py --provider openai --list-models
+
+# Enable verbose mode to log full JSON responses to file (for debugging)
+python autonomous_agent_demo.py --provider openai --verbose --project-dir ./my_project
+# Verbose logs are saved to logs/{model-name}-verbose-{timestamp}.md
 ```
 
 ## Important Timing Expectations
 
 > **Warning: This demo takes a long time to run!**
 
-- **First session (initialization):** The agent generates a `feature_list.json` with 200 test cases. This takes several minutes and may appear to hang - this is normal.
+- **First session (initialization):** The agent generates a `feature_list.json` with 50 test cases. This takes several minutes and may appear to hang - this is normal.
 
 - **Subsequent sessions:** Each coding iteration can take **5-15 minutes** depending on complexity and model.
 
-- **Full app:** Building all 200 features typically requires **many hours** of total runtime across multiple sessions.
+- **Full app:** Building all 50 features typically requires **many hours** of total runtime across multiple sessions.
 
 **Tip:** Modify `prompts/initializer_prompt.md` to reduce the feature count (e.g., 20-50 features) for faster demos.
 
@@ -212,6 +216,7 @@ autonomous-coding-multimodel/
 | `--list-models` | List models for provider | - |
 | `--no-browser` | Disable browser automation | Enabled by default |
 | `--chrome-debug-port` | Chrome debugging port | `9222` |
+| `--verbose` | Log full JSON responses to markdown file in logs/ directory (for debugging) | Disabled |
 
 ## Customization
 
@@ -221,7 +226,7 @@ Edit `prompts/app_spec.txt` to specify a different application to build.
 
 ### Adjusting Feature Count
 
-Edit `prompts/initializer_prompt.md` and change the "200 features" requirement to a smaller number.
+Edit `prompts/initializer_prompt.md` and change the "50 features" requirement to a smaller number.
 
 ### Adding New Providers
 

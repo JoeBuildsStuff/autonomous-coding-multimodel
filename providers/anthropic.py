@@ -55,8 +55,8 @@ class AnthropicProvider(BaseProvider):
     feature set including sandboxing, MCP tools, and security hooks.
     """
     
-    def __init__(self, model: str, project_dir: Path):
-        super().__init__(model, project_dir)
+    def __init__(self, model: str, project_dir: Path, verbose: bool = False):
+        super().__init__(model, project_dir, verbose=verbose)
         self._client: ClaudeSDKClient | None = None
         self._current_query: str | None = None
     
@@ -116,6 +116,8 @@ class AnthropicProvider(BaseProvider):
         print(f"   - Filesystem restricted to: {self.project_dir.resolve()}")
         print("   - Bash commands restricted to allowlist (see security.py)")
         print("   - MCP servers: puppeteer (browser automation)")
+        if self.verbose and self._verbose_log_file:
+            print(f"   - Verbose logging: {self._verbose_log_file.resolve()}")
         print()
         
         return ClaudeSDKClient(
@@ -170,6 +172,15 @@ class AnthropicProvider(BaseProvider):
         
         async for msg in self._client.receive_response():
             msg_type = type(msg).__name__
+            
+            # Print full JSON in verbose mode
+            if self.verbose:
+                msg_dict = {
+                    "type": msg_type,
+                    "content": msg.content if hasattr(msg, "content") else None,
+                    "message": msg,
+                }
+                self._print_verbose_json("Claude SDK Message", msg_dict)
             
             if msg_type == "AssistantMessage" and hasattr(msg, "content"):
                 # Convert SDK blocks to our types

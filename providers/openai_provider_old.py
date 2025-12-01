@@ -1,22 +1,9 @@
 """
-Grok Provider
-=============
+OpenAI Provider
+===============
 
-Provider implementation for xAI's Grok models via OpenAI-compatible API.
-
-Models:
-- grok-4-1-fast-reasoning: Best tool-calling model, 2M context, reasoning enabled
-- grok-4-1-fast-non-reasoning: Best tool-calling model, 2M context, no reasoning (faster)
-- grok-4-fast-reasoning: SOTA cost-efficiency, 2M context, reasoning enabled
-- grok-4-fast-non-reasoning: SOTA cost-efficiency, 2M context, no reasoning
-- grok-4: Flagship model, 256K context
-- grok-3: Previous gen flagship, 131K context
-- grok-3-mini: Smaller model, supports reasoning_effort parameter
-
-Note: Only grok-3-mini supports the reasoning_effort parameter.
-Other models use -reasoning/-non-reasoning model variants instead.
-
-Browser automation via puppeteer-mcp-server is enabled by default.
+Provider implementation for OpenAI models (GPT-4, GPT-5, etc.).
+Supports both the chat completions API and the newer responses API for GPT-5 models.
 """
 
 import json
@@ -66,11 +53,12 @@ When working on tasks:
 Always explain what you're doing and why before using tools."""
 
 
-class GrokProvider(BaseProvider):
+class OpenAIProvider(BaseProvider):
     """
-    Provider for xAI's Grok models.
+    Provider for OpenAI models.
     
-    Uses the OpenAI-compatible API at api.x.ai.
+    Uses the responses API for GPT-5 models (with reasoning support)
+    and falls back to chat completions for older models.
     
     Browser automation via puppeteer-mcp-server is enabled by default.
     """
@@ -81,66 +69,49 @@ class GrokProvider(BaseProvider):
         project_dir: Path,
         enable_browser: bool = True,  # Default ON like original repo
         chrome_debug_port: int = 9222,
-        verbose: bool = False,
     ):
-        super().__init__(model, project_dir, verbose=verbose)
+        super().__init__(model, project_dir)
         self._client: OpenAI | None = None
         self._tool_executor: ToolExecutor | None = None
         self._mcp_adapter: Optional[PuppeteerMCPAdapter] = None
         self._messages: List[dict] = []
+        self._use_responses_api = model.startswith("gpt-5")
         self._enable_browser = enable_browser
         self._chrome_debug_port = chrome_debug_port
         self._browser_available = False  # Track if browser tools actually started
     
     @classmethod
     def get_required_env_var(cls) -> str:
-        return "XAI_API_KEY"
+        return "OPENAI_API_KEY"
     
     @classmethod
     def get_default_model(cls) -> str:
-        return "grok-4-1-fast-reasoning"
+        return "gpt-5-nano"
     
     @classmethod
     def get_available_models(cls) -> List[str]:
         return [
-            # Grok 4.1 Fast - best tool-calling model, 2M context
-            "grok-4-1-fast-reasoning",      # Reasoning enabled (default)
-            "grok-4-1-fast-non-reasoning",  # Non-reasoning (faster)
-            # Grok 4 Fast - SOTA cost-efficiency, 2M context
-            "grok-4-fast-reasoning",
-            "grok-4-fast-non-reasoning",
-            # Grok 4 - flagship model, 256K context
-            "grok-4",
-            # Grok 3 models
-            "grok-3",
-            "grok-3-mini",  # Only model that supports reasoning_effort parameter
+            "gpt-5-nano",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4-turbo",
+            "gpt-4",
+            "o1",
+            "o1-mini",
         ]
     
-    @property
-    def _is_grok3_mini(self) -> bool:
-        """Check if this is grok-3-mini which supports reasoning_effort parameter."""
-        return "grok-3-mini" in self.model.lower()
-    
-    @property
-    def _is_reasoning_variant(self) -> bool:
-        """Check if this is a reasoning variant (for display purposes)."""
-        return "reasoning" in self.model.lower() and "non-reasoning" not in self.model.lower()
-    
     def _create_client(self) -> OpenAI:
-        """Create Grok client using OpenAI SDK with custom base URL."""
-        api_key = os.environ.get("XAI_API_KEY")
+        """Create OpenAI client."""
+        api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
-                "XAI_API_KEY environment variable not set.\n"
-                "Get your API key from: https://console.x.ai/"
+                "OPENAI_API_KEY environment variable not set.\n"
+                "Get your API key from: https://platform.openai.com/api-keys"
             )
         
-        return OpenAI(
-            api_key=api_key,
-            base_url="https://api.x.ai/v1",
-        )
+        return OpenAI(api_key=api_key)
     
-    async def __aenter__(self) -> "GrokProvider":
+    async def __aenter__(self) -> "OpenAIProvider":
         """Enter async context."""
         self._client = self._create_client()
         self._tool_executor = ToolExecutor(self.project_dir)
@@ -168,20 +139,16 @@ class GrokProvider(BaseProvider):
         # Count tools (include browser if available)
         tool_count = len(get_all_tool_definitions(include_browser=self._browser_available))
         
-        print(f"Initialized GrokProvider")
+        print(f"Initialized OpenAIProvider")
         print(f"   - Model: {self.model}")
-        if self._is_reasoning_variant:
-            print(f"   - Mode: reasoning enabled")
-        elif "non-reasoning" in self.model.lower():
-            print(f"   - Mode: non-reasoning (faster)")
-        if self._is_grok3_mini:
-            print(f"   - Reasoning effort: medium")
+        print(f"   - API: {'responses' if self._use_responses_api else 'chat.completions'}")
+        if self._use_responses_api:
+            print(f"   - Reasoning: medium effort")
+            print(f"   - Verbosity: medium")
         print(f"   - Project directory: {self.project_dir.resolve()}")
         print(f"   - Tools: {tool_count} available")
         if self._browser_available:
             print(f"   - MCP servers: puppeteer (browser automation)")
-        if self.verbose and self._verbose_log_file:
-            print(f"   - Verbose logging: {self._verbose_log_file.resolve()}")
         print()
         
         return self
@@ -221,6 +188,151 @@ class GrokProvider(BaseProvider):
         if not self._client or not self._tool_executor:
             raise RuntimeError("Provider not initialized. Use 'async with' context manager.")
         
+        if self._use_responses_api:
+            async for msg in self._receive_response_responses_api():
+                yield msg
+        else:
+            async for msg in self._receive_response_chat_api():
+                yield msg
+    
+    async def _receive_response_responses_api(self) -> AsyncIterator[Any]:
+        """Handle GPT-5 models using the responses API with reasoning."""
+        max_iterations = 100
+        iteration = 0
+        
+        # Get tools including browser if available
+        tool_defs = get_all_tool_definitions(include_browser=self._browser_available)
+        
+        # Convert tools to the responses API format
+        tools = []
+        for tool_def in tool_defs:
+            tools.append({
+                "type": "function",
+                "name": tool_def["function"]["name"],
+                "description": tool_def["function"]["description"],
+                "parameters": tool_def["function"]["parameters"],
+            })
+        
+        while iteration < max_iterations:
+            iteration += 1
+            
+            # Build input from messages
+            input_messages = []
+            for msg in self._messages:
+                if msg["role"] == "system":
+                    input_messages.append({
+                        "role": "system",
+                        "content": msg["content"]
+                    })
+                elif msg["role"] == "user":
+                    input_messages.append({
+                        "role": "user",
+                        "content": msg["content"]
+                    })
+                elif msg["role"] == "assistant":
+                    input_messages.append({
+                        "role": "assistant",
+                        "content": msg.get("content", "")
+                    })
+                elif msg["role"] == "tool":
+                    input_messages.append({
+                        "role": "tool",
+                        "content": msg["content"],
+                        "tool_call_id": msg.get("tool_call_id", "")
+                    })
+            
+            # Make API call using responses endpoint
+            response = self._client.responses.create(
+                model=self.model,
+                input=input_messages,
+                text={
+                    "format": {"type": "text"},
+                    "verbosity": "medium"
+                },
+                reasoning={
+                    "effort": "medium"
+                },
+                tools=tools if tools else [],
+                store=True,
+                include=[
+                    "reasoning.encrypted_content",
+                ]
+            )
+            
+            # Process response
+            content_blocks = []
+            tool_calls = []
+            
+            # Handle the response output
+            for output_item in response.output:
+                if output_item.type == "message":
+                    for content in output_item.content:
+                        if content.type == "text":
+                            content_blocks.append(TextBlock(text=content.text))
+                elif output_item.type == "function_call":
+                    tool_calls.append({
+                        "id": output_item.call_id,
+                        "name": output_item.name,
+                        "arguments": output_item.arguments
+                    })
+                    content_blocks.append(ToolUseBlock(
+                        name=output_item.name,
+                        input=json.loads(output_item.arguments) if output_item.arguments else {},
+                        id=output_item.call_id,
+                    ))
+            
+            # Add assistant response to history
+            self._messages.append({
+                "role": "assistant",
+                "content": "".join(b.text for b in content_blocks if isinstance(b, TextBlock)),
+                "tool_calls": tool_calls
+            })
+            
+            if content_blocks:
+                yield AssistantMessage(content=content_blocks)
+            
+            # If no tool calls, we're done
+            if not tool_calls:
+                break
+            
+            # Execute tools and collect results
+            tool_results = []
+            for tool_call in tool_calls:
+                tool_name = tool_call["name"]
+                tool_args = json.loads(tool_call["arguments"]) if tool_call["arguments"] else {}
+                
+                # Use async execution for browser tools
+                result = await self._tool_executor.execute_async(tool_name, tool_args)
+                
+                if "error" in result:
+                    result_content = f"Error: {result['error']}"
+                    is_error = True
+                else:
+                    result_content = result.get("result", "")
+                    is_error = False
+                
+                self._messages.append({
+                    "role": "tool",
+                    "content": result_content,
+                    "tool_call_id": tool_call["id"],
+                })
+                
+                tool_results.append(ToolResultBlock(
+                    content=result_content,
+                    tool_use_id=tool_call["id"],
+                    is_error=is_error,
+                ))
+            
+            if tool_results:
+                yield UserMessage(content=tool_results)
+        
+        if iteration >= max_iterations:
+            yield AssistantMessage(content=[
+                TextBlock(text="\n[Warning: Maximum iterations reached]")
+            ])
+    
+    async def _receive_response_chat_api(self) -> AsyncIterator[Any]:
+        """Handle older models using the chat completions API."""
         max_iterations = 100
         iteration = 0
         
@@ -230,39 +342,21 @@ class GrokProvider(BaseProvider):
         while iteration < max_iterations:
             iteration += 1
             
-            # Build API call parameters
-            api_params = {
-                "model": self.model,
-                "messages": self._messages,
-                "tools": tools,
-                "tool_choice": "auto",
-            }
-            
-            # Add reasoning effort ONLY for grok-3-mini (other models don't support it)
-            # Grok 4.x models use -reasoning/-non-reasoning model variants instead
-            if self._is_grok3_mini:
-                api_params["reasoning_effort"] = "medium"
-            
-            # Make API call
-            response = self._client.chat.completions.create(**api_params)
-            
-            # Print full JSON in verbose mode
-            if self.verbose:
-                self._print_verbose_json("Grok API Response", response)
+            response = self._client.chat.completions.create(
+                model=self.model,
+                messages=self._messages,
+                tools=tools,
+                tool_choice="auto",
+            )
             
             assistant_message = response.choices[0].message
-            
-            # Add assistant message to history
             self._messages.append(assistant_message.model_dump())
             
-            # Convert to our message format and yield
             content_blocks = []
             
-            # Handle text content
             if assistant_message.content:
                 content_blocks.append(TextBlock(text=assistant_message.content))
             
-            # Handle tool calls
             if assistant_message.tool_calls:
                 for tool_call in assistant_message.tool_calls:
                     content_blocks.append(ToolUseBlock(
@@ -274,11 +368,9 @@ class GrokProvider(BaseProvider):
             if content_blocks:
                 yield AssistantMessage(content=content_blocks)
             
-            # If no tool calls, we're done
             if not assistant_message.tool_calls:
                 break
             
-            # Execute tools and collect results
             tool_results = []
             for tool_call in assistant_message.tool_calls:
                 tool_name = tool_call.function.name
@@ -287,7 +379,6 @@ class GrokProvider(BaseProvider):
                 # Use async execution for browser tools
                 result = await self._tool_executor.execute_async(tool_name, tool_args)
                 
-                # Format result for API
                 if "error" in result:
                     result_content = f"Error: {result['error']}"
                     is_error = True
@@ -295,7 +386,6 @@ class GrokProvider(BaseProvider):
                     result_content = result.get("result", "")
                     is_error = False
                 
-                # Add to message history
                 self._messages.append({
                     "role": "tool",
                     "content": result_content,
@@ -308,7 +398,6 @@ class GrokProvider(BaseProvider):
                     is_error=is_error,
                 ))
             
-            # Yield tool results
             if tool_results:
                 yield UserMessage(content=tool_results)
         

@@ -25,6 +25,7 @@ from .base import (
 )
 from tools.executor import ToolExecutor
 from tools.sdk_tools import SDK_TOOLS, set_executor
+from tools.mcp_adapter import MCPError
 
 
 # System prompt for coding tasks
@@ -64,9 +65,8 @@ class OpenAIProvider(BaseProvider):
         project_dir: Path,
         enable_browser: bool = True,
         chrome_debug_port: int = 9222,
-        verbose: bool = False,
     ):
-        super().__init__(model, project_dir, verbose=verbose)
+        super().__init__(model, project_dir)
         self._agent: Optional[Agent] = None
         self._tool_executor: Optional[ToolExecutor] = None
         self._mcp_server: Optional[MCPServerStdio] = None
@@ -117,8 +117,6 @@ class OpenAIProvider(BaseProvider):
                         "args": ["-y", "puppeteer-mcp-server"],
                     },
                     cache_tools_list=True,
-                    # Increase timeout for browser operations (default is 5s, increased to 60s)
-                    client_session_timeout_seconds=60.0,
                 )
                 await self._mcp_server.__aenter__()
                 mcp_servers.append(self._mcp_server)
@@ -152,8 +150,6 @@ class OpenAIProvider(BaseProvider):
         print(f"   - Tools: {tool_count} available (via SDK)")
         if self._browser_available:
             print(f"   - MCP servers: puppeteer (browser automation)")
-        if self.verbose and self._verbose_log_file:
-            print(f"   - Verbose logging: {self._verbose_log_file.resolve()}")
         print()
         
         return self
@@ -189,43 +185,26 @@ class OpenAIProvider(BaseProvider):
             raise RuntimeError("Provider not initialized. Use 'async with' context manager.")
         
         # Use SDK's streaming runner
-        result = Runner.run_streamed(
-            self._agent, 
-            input=self._current_message,
-            max_turns=1000 
-        )
+        result = Runner.run_streamed(self._agent, input=self._current_message)
         
         # Track current message blocks
         current_text_blocks = []
         current_tool_use_blocks = []
         pending_tool_results = []
-        has_streamed_deltas = False  # Track if we've streamed text deltas
         
         async for event in result.stream_events():
-            # Print full JSON in verbose mode
-            if self.verbose:
-                # Build event dict, converting objects properly
-                event_dict = {
-                    "type": event.type,
-                }
-                # Convert data and item through object_to_dict for better formatting
-                if hasattr(event, "data") and event.data is not None:
-                    event_dict["data"] = event.data
-                if hasattr(event, "item") and event.item is not None:
-                    event_dict["item"] = event.item
-                self._print_verbose_json("OpenAI SDK Event", event_dict)
-            
             # Handle different event types
             if event.type == "run_item_stream_event":
                 item = event.item
                 
-                if item.type == "tool_call_item":
-                    # Tool is being called - yield immediately with any pending text
-                    if current_text_blocks:
-                        yield AssistantMessage(content=current_text_blocks)
-                        current_text_blocks = []
-                        has_streamed_deltas = False  # Reset since we yielded accumulated text
-                    
+                if item.type == "message_output_item":
+                    # Text output from the agent
+                    text_content = ItemHelpers.text_message_output(item)
+                    if text_content:
+                        current_text_blocks.append(TextBlock(text=text_content))
+                
+                elif item.type == "tool_call_item":
+                    # Tool is being called
                     # Extract tool call details from raw_item
                     raw_item = getattr(item, "raw_item", None)
                     if raw_item:
@@ -252,21 +231,26 @@ class OpenAIProvider(BaseProvider):
                         tool_id = ""
                         tool_input = {}
                     
-                    # Yield tool use block
-                    yield AssistantMessage(content=[
-                        ToolUseBlock(
-                            name=tool_name,
-                            input=tool_input,
-                            id=tool_id,
-                        )
-                    ])
+                    current_tool_use_blocks.append(ToolUseBlock(
+                        name=tool_name,
+                        input=tool_input,
+                        id=tool_id,
+                    ))
                 
                 elif item.type == "tool_call_output_item":
-                    # Tool execution completed - yield result
+                    # Tool execution completed
                     tool_id = getattr(item, "tool_call_id", "")
                     output = getattr(item, "output", "")
                     is_error = getattr(item, "is_error", False)
                     
+                    # Check if we should yield previous blocks first
+                    if current_text_blocks or current_tool_use_blocks:
+                        content_blocks = current_text_blocks + current_tool_use_blocks
+                        yield AssistantMessage(content=content_blocks)
+                        current_text_blocks = []
+                        current_tool_use_blocks = []
+                    
+                    # Yield tool result
                     yield UserMessage(content=[
                         ToolResultBlock(
                             content=str(output),
@@ -274,39 +258,22 @@ class OpenAIProvider(BaseProvider):
                             is_error=is_error,
                         )
                     ])
-                
-                elif item.type == "message_output_item":
-                    # Complete message output - extract text
-                    # Only use this if we haven't already streamed deltas (fallback path)
-                    if not has_streamed_deltas:
-                        try:
-                            text_content = ItemHelpers.text_message_output(item)
-                            if text_content and text_content.strip():
-                                current_text_blocks.append(TextBlock(text=text_content))
-                        except Exception:
-                            # Fallback if ItemHelpers doesn't work
-                            pass
             
             elif event.type == "raw_response_event":
                 # Handle raw text deltas for streaming text
                 if isinstance(event.data, ResponseTextDeltaEvent):
                     delta = event.data.delta
                     if delta:
-                        has_streamed_deltas = True  # Mark that we're streaming
-                        # Accumulate text deltas (for tracking, though we stream immediately)
+                        # Accumulate text deltas
                         if current_text_blocks:
                             current_text_blocks[-1].text += delta
                         else:
                             current_text_blocks.append(TextBlock(text=delta))
-                        
-                        # Yield delta immediately for real-time streaming output
-                        # This allows agent.py to print text as it's generated
-                        yield AssistantMessage(content=[TextBlock(text=delta)])
         
-        # Yield any remaining text blocks only if we haven't already streamed them
-        # (i.e., if we got message_output_item but no deltas)
-        if current_text_blocks and not has_streamed_deltas:
-            yield AssistantMessage(content=current_text_blocks)
+        # Yield any remaining blocks
+        if current_text_blocks or current_tool_use_blocks:
+            content_blocks = current_text_blocks + current_tool_use_blocks
+            yield AssistantMessage(content=content_blocks)
         
         # Clear the current message
         self._current_message = None

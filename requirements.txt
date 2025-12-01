@@ -2,3 +2,4 @@
 claude-code-sdk>=0.0.25
 openai>=1.0.0
 python-dotenv>=1.0.0
+openai-agents>=0.2.0  # OpenAI Agents SDK (installs as 'agents' module)

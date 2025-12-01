@@ -132,6 +132,12 @@ Environment Variables:
         help="Chrome remote debugging port for puppeteer_connect_active_tab (default: 9222)",
     )
 
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print full JSON responses from the model provider (for debugging)",
+    )
+
     return parser.parse_args()
 
 
@@ -192,6 +198,7 @@ def main() -> None:
                 max_iterations=args.max_iterations,
                 enable_browser=enable_browser,
                 chrome_debug_port=args.chrome_debug_port,
+                verbose=args.verbose,
             )
         )
     except KeyboardInterrupt:

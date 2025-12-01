@@ -96,6 +96,7 @@ async def run_autonomous_agent(
     max_iterations: Optional[int] = None,
     enable_browser: bool = False,
     chrome_debug_port: int = 9222,
+    verbose: bool = False,
 ) -> None:
     """
     Run the autonomous agent loop.
@@ -107,6 +108,7 @@ async def run_autonomous_agent(
         max_iterations: Maximum number of iterations (None for unlimited)
         enable_browser: Whether to enable browser automation tools
         chrome_debug_port: Chrome debugging port for browser connection
+        verbose: Whether to print full JSON responses from the provider
     """
     # Use default model if not specified
     if model is None:
@@ -124,6 +126,8 @@ async def run_autonomous_agent(
         print("Max iterations: Unlimited (will run until completion)")
     if enable_browser:
         print(f"Browser tools: Enabled (Chrome debug port: {chrome_debug_port})")
+    if verbose:
+        print("Verbose mode: Enabled (full JSON responses will be logged to file)")
     print()
 
     # Create project directory
@@ -170,6 +174,7 @@ async def run_autonomous_agent(
             project_dir,
             enable_browser=enable_browser,
             chrome_debug_port=chrome_debug_port,
+            verbose=verbose,
         )
 
         # Choose prompt based on session type

@@ -20,6 +20,11 @@ ALLOWED_COMMANDS = {
     "tail",
     "wc",
     "grep",
+    # Text processing utilities
+    "sed",      # Essential for text processing (safe within project directory)
+    "echo",     # Common in shell scripts and command chaining
+    "true",     # Needed for error handling patterns (cmd || true)
+    "false",    # Companion to true
     # File operations (agent uses SDK tools for most file ops, but cp/mkdir needed occasionally)
     "cp",
     "mkdir",
