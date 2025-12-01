@@ -208,8 +208,25 @@ const extractArtifacts = (messages = []) => {
   return artifacts
 }
 
-export default function App () {
-  const [conversations, setConversations] = useState(() => loadStoredConversations())
+export default function App () { 
+  // Theme support: light/dark toggle stored in localStorage
+  const THEME_KEY = 'claude-clone::theme'
+  const [theme, setTheme] = useState(() => {
+    if (typeof window === 'undefined') return 'light'
+    return window.localStorage.getItem(THEME_KEY) ?? 'light'
+  })
+  // apply theme on load and whenever it changes
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', theme)
+      window.localStorage.setItem(THEME_KEY, theme)
+    }
+  }, [theme])
+  const toggleTheme = useCallback(() => {
+    setTheme((t) => (t === 'light' ? 'dark' : 'light'))
+  }, [])
+  
+  const [conversations, setConversations] = useState(() => loadStoredConversations())\n  \n  useEffect(() => {\n    const handler = (e) => {\n      if (e.key.toLowerCase() === 't') {\n        toggleTheme()\n      }\n    }\n    window.addEventListener('keydown', handler)\n    return () => window.removeEventListener('keydown', handler)\n  }, [toggleTheme])
   const [activeConversationId, setActiveConversationId] = useState(() => {
     if (typeof window === 'undefined') return null
     return window.localStorage.getItem(STORAGE_KEYS.activeId)

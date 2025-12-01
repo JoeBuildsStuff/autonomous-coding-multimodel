@@ -179,8 +179,7 @@ autonomous-coding-multimodel/
 │   ├── __init__.py          # Provider factory
 │   ├── base.py              # Abstract base class
 │   ├── anthropic.py         # Claude via Agent SDK
-│   ├── openai_compat.py     # OpenAI-compatible base
-│   ├── openai_provider.py   # OpenAI models
+│   ├── openai_provider.py   # OpenAI models (uses Agents SDK)
 │   └── grok_provider.py     # Grok models
 ├── tools/                    # Tool execution for non-Claude providers
 │   ├── __init__.py
@@ -231,7 +230,7 @@ Edit `prompts/initializer_prompt.md` and change the "50 features" requirement to
 ### Adding New Providers
 
 1. Create a new provider class in `providers/`
-2. Extend `BaseProvider` (for custom implementation) or `OpenAICompatibleProvider` (for OpenAI-like APIs)
+2. Extend `BaseProvider` and implement the required methods
 3. Register in `providers/__init__.py`
 
 ### Modifying Allowed Commands
